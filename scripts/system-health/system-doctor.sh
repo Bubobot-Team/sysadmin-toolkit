@@ -269,7 +269,7 @@ check_large_log_files() {
     log "INFO" "Checking for large log files..."
     
     local large_logs=()
-    local log_dirs=("/var/log" "/var/log/nginx" "/var/log/apache2" "/var/log/httpd")
+    local log_dirs=("/var/log" "/var/log/nginx" "/var/log/apache2" "/var/log/httpd" "/tmp")
     
     for log_dir in "${log_dirs[@]}"; do
         if [[ -d "$log_dir" ]]; then
@@ -290,6 +290,34 @@ check_large_log_files() {
     else
         log "SUCCESS" "No large log files detected"
         set_result "large_log_files" "0"
+    fi
+    
+    # Also check for any large files in /tmp
+    check_large_tmp_files
+}
+
+check_large_tmp_files() {
+    log "INFO" "Checking for large files in /tmp..."
+    
+    local large_tmp_files=()
+    
+    if [[ -d "/tmp" ]]; then
+        while IFS= read -r -d '' file; do
+            local size_kb=$(du -k "$file" 2>/dev/null | cut -f1)
+            if [[ $size_kb -gt $LOG_SIZE_THRESHOLD ]]; then
+                local size_mb=$((size_kb / 1024))
+                large_tmp_files+=("$file (${size_mb}MB)")
+            fi
+        done < <(find "/tmp" -type f -size +100M -print0 2>/dev/null)
+    fi
+    
+    if [[ ${#large_tmp_files[@]} -gt 0 ]]; then
+        WARNINGS+=("Large files in /tmp: ${large_tmp_files[*]}")
+        log "WARNING" "Large files found in /tmp: ${large_tmp_files[*]}"
+        set_result "large_tmp_files" "${#large_tmp_files[@]}"
+    else
+        log "SUCCESS" "No large files detected in /tmp"
+        set_result "large_tmp_files" "0"
     fi
 }
 
