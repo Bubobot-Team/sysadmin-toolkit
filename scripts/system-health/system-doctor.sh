@@ -16,6 +16,7 @@
 #   --aggressive-clean  Enable more aggressive cleanup operations
 #   --service-restart   Allow automatic service restarts
 #   --report-json       Output results in JSON format
+#   --json-only         Output JSON directly to stdout for easier integration
 #   --verbose           Enable verbose logging
 #   --help              Show this help message
 #===============================================================================
@@ -41,6 +42,7 @@ CHECK_ONLY=false
 AGGRESSIVE_CLEAN=false
 SERVICE_RESTART=false
 REPORT_JSON=false
+JSON_ONLY=false
 VERBOSE=false
 
 # Colors for output
@@ -160,9 +162,20 @@ cleanup_on_exit() {
 check_cpu_usage() {
     log "INFO" "Checking CPU usage..."
     
-    # Get CPU usage (average over 1 second)
-    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
-    cpu_usage=${cpu_usage%.*}  # Remove decimal part
+    # Get CPU usage - different methods for different platforms
+    local cpu_usage=0
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        cpu_usage=$(top -l 1 | grep "CPU usage" | awk '{print $3}' | sed 's/%//')
+    else
+        # Linux
+        cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
+    fi
+    
+    # Remove decimal part and handle empty values
+    cpu_usage=${cpu_usage%.*}
+    cpu_usage=${cpu_usage:-0}  # Default to 0 if empty
     
     set_result "cpu_usage" $cpu_usage
     
@@ -171,7 +184,11 @@ check_cpu_usage() {
         log "ERROR" "CPU usage is critically high: ${cpu_usage}%"
         
         # Find top CPU consuming processes
-        local top_processes=$(ps aux --sort=-%cpu | head -6 | tail -5)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            local top_processes=$(ps aux --sort=-%cpu | head -6 | tail -5 2>/dev/null || echo "Unable to get process list")
+        else
+            local top_processes=$(ps aux --sort=-%cpu | head -6 | tail -5)
+        fi
         log "INFO" "Top CPU consuming processes:\n$top_processes"
         
         return 1
@@ -329,23 +346,49 @@ check_large_tmp_files() {
 check_system_load() {
     log "INFO" "Checking system load average..."
     
-    # Get load averages
-    local load_avg=$(uptime | awk -F'load average:' '{ print $2 }' | awk -F',' '{ print $1 }' | tr -d ' ')
-    local load_1min=${load_avg%.*}
+    # Get load averages - different methods for different platforms
+    local load_avg="0"
+    local cpu_cores=1
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        load_avg=$(uptime | awk -F'load averages: ' '{print $2}' | awk '{print $1}' | sed 's/,//')
+        cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo "1")
+    else
+        # Linux
+        load_avg=$(uptime | awk -F'load average:' '{ print $2 }' | awk -F',' '{ print $1 }' | tr -d ' ')
+        cpu_cores=$(nproc)
+    fi
+    
+    # Clean up load average value
+    load_avg=${load_avg:-0}
+    load_avg=$(echo "$load_avg" | sed 's/,//')
     
     # Get number of CPU cores
-    local cpu_cores=$(nproc)
-    local load_per_core=$((${load_1min%.*} / cpu_cores))
+    cpu_cores=${cpu_cores:-1}
     
-    set_result "load_average" $load_avg
+    # Calculate load per core (handle decimal values)
+    local load_per_core=0
+    if command -v bc >/dev/null 2>&1; then
+        load_per_core=$(echo "scale=1; $load_avg / $cpu_cores" | bc 2>/dev/null || echo "0")
+    else
+        # Simple integer division fallback
+        load_per_core=$((${load_avg%.*} / cpu_cores))
+    fi
+    
+    set_result "load_average" "$load_avg"
     set_result "cpu_cores" $cpu_cores
-    set_result "load_per_core" $load_per_core
+    set_result "load_per_core" "$load_per_core"
     
-    if [[ $load_per_core -gt $LOAD_THRESHOLD ]]; then
+    # Convert load_per_core to integer for comparison
+    local load_per_core_int=${load_per_core%.*}
+    load_per_core_int=${load_per_core_int:-0}
+    
+    if [[ $load_per_core_int -gt $LOAD_THRESHOLD ]]; then
         CRITICAL_ISSUES+=("High system load: $load_avg (${load_per_core}x per core)")
         log "ERROR" "System load is critically high: $load_avg"
         return 1
-    elif [[ $load_per_core -gt $((LOAD_THRESHOLD / 2)) ]]; then
+    elif [[ $load_per_core_int -gt $((LOAD_THRESHOLD / 2)) ]]; then
         WARNINGS+=("Elevated system load: $load_avg")
         log "WARNING" "System load is elevated: $load_avg"
     else
@@ -703,15 +746,61 @@ generate_json_report() {
     [[ -z "${ACTIONS_KEYS:-}" ]] && declare -a ACTIONS_KEYS=()
     [[ -z "${ACTIONS_VALUES:-}" ]] && declare -a ACTIONS_VALUES=()
     
+    # Build actions_taken object
+    local actions_json="{}"
+    if [[ ${#ACTIONS_KEYS[@]} -gt 0 ]]; then
+        local actions_parts=()
+        for k in "${!ACTIONS_KEYS[@]}"; do
+            actions_parts+=("\"${ACTIONS_KEYS[$k]}\": \"${ACTIONS_VALUES[$k]}\"")
+        done
+        actions_json="{$(IFS=,; echo "${actions_parts[*]}")}"
+    fi
+    
+    # Build metrics object
+    local metrics_json="{}"
+    if [[ ${#RESULTS_KEYS[@]} -gt 0 ]]; then
+        local metrics_parts=()
+        for k in "${!RESULTS_KEYS[@]}"; do
+            metrics_parts+=("\"${RESULTS_KEYS[$k]}\": \"${RESULTS_VALUES[$k]}\"")
+        done
+        metrics_json="{$(IFS=,; echo "${metrics_parts[*]}")}"
+    fi
+    
+    # Build critical_issues array
+    local critical_issues_json="[]"
+    if [[ ${#CRITICAL_ISSUES[@]} -gt 0 ]]; then
+        local critical_parts=()
+        for issue in "${CRITICAL_ISSUES[@]}"; do
+            critical_parts+=("\"$issue\"")
+        done
+        critical_issues_json="[$(IFS=,; echo "${critical_parts[*]}")]"
+    fi
+    
+    # Build warnings array
+    local warnings_json="[]"
+    if [[ ${#WARNINGS[@]} -gt 0 ]]; then
+        local warning_parts=()
+        for warning in "${WARNINGS[@]}"; do
+            warning_parts+=("\"$warning\"")
+        done
+        warnings_json="[$(IFS=,; echo "${warning_parts[*]}")]"
+    fi
+    
     local json_output="{
         \"timestamp\": \"$(date -Iseconds)\",
         \"hostname\": \"$(hostname)\",
         \"version\": \"$SCRIPT_VERSION\",
         \"status\": \"$([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "healthy" || echo "unhealthy")\",
-        \"critical_issues\": $(printf '%s\n' "${CRITICAL_ISSUES[@]}" | jq -R . | jq -s . 2>/dev/null || printf '%s\n' "${CRITICAL_ISSUES[@]}"),
-        \"warnings\": $(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s . 2>/dev/null || printf '%s\n' "${WARNINGS[@]}"),
-        \"actions_taken\": $(for k in "${!ACTIONS_KEYS[@]}"; do echo "\"${ACTIONS_KEYS[$k]}\": \"${ACTIONS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/}/'),
-        \"metrics\": $(for k in "${!RESULTS_KEYS[@]}"; do echo "\"${RESULTS_KEYS[$k]}\": \"${RESULTS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/)/')
+        \"critical_issues\": $critical_issues_json,
+        \"warnings\": $warnings_json,
+        \"actions_taken\": $actions_json,
+        \"metrics\": $metrics_json,
+        \"summary\": {
+            \"critical_issues_count\": ${#CRITICAL_ISSUES[@]},
+            \"warnings_count\": ${#WARNINGS[@]},
+            \"actions_taken_count\": ${#ACTIONS_KEYS[@]},
+            \"exit_code\": $([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "0" || echo "1")
+        }
     }"
     
     if command -v jq >/dev/null 2>&1; then
@@ -721,6 +810,77 @@ generate_json_report() {
         log "WARNING" "jq not found, JSON report is not pretty-printed"
     fi
     echo "JSON report saved to: $JSON_REPORT_FILE"
+}
+
+output_json_stdout() {
+    # Ensure arrays are initialized
+    [[ -z "${CRITICAL_ISSUES:-}" ]] && declare -a CRITICAL_ISSUES=()
+    [[ -z "${WARNINGS:-}" ]] && declare -a WARNINGS=()
+    [[ -z "${ACTIONS_KEYS:-}" ]] && declare -a ACTIONS_KEYS=()
+    [[ -z "${ACTIONS_VALUES:-}" ]] && declare -a ACTIONS_VALUES=()
+    
+    # Build actions_taken object
+    local actions_json="{}"
+    if [[ ${#ACTIONS_KEYS[@]} -gt 0 ]]; then
+        local actions_parts=()
+        for k in "${!ACTIONS_KEYS[@]}"; do
+            actions_parts+=("\"${ACTIONS_KEYS[$k]}\": \"${ACTIONS_VALUES[$k]}\"")
+        done
+        actions_json="{$(IFS=,; echo "${actions_parts[*]}")}"
+    fi
+    
+    # Build metrics object
+    local metrics_json="{}"
+    if [[ ${#RESULTS_KEYS[@]} -gt 0 ]]; then
+        local metrics_parts=()
+        for k in "${!RESULTS_KEYS[@]}"; do
+            metrics_parts+=("\"${RESULTS_KEYS[$k]}\": \"${RESULTS_VALUES[$k]}\"")
+        done
+        metrics_json="{$(IFS=,; echo "${metrics_parts[*]}")}"
+    fi
+    
+    # Build critical_issues array
+    local critical_issues_json="[]"
+    if [[ ${#CRITICAL_ISSUES[@]} -gt 0 ]]; then
+        local critical_parts=()
+        for issue in "${CRITICAL_ISSUES[@]}"; do
+            critical_parts+=("\"$issue\"")
+        done
+        critical_issues_json="[$(IFS=,; echo "${critical_parts[*]}")]"
+    fi
+    
+    # Build warnings array
+    local warnings_json="[]"
+    if [[ ${#WARNINGS[@]} -gt 0 ]]; then
+        local warning_parts=()
+        for warning in "${WARNINGS[@]}"; do
+            warning_parts+=("\"$warning\"")
+        done
+        warnings_json="[$(IFS=,; echo "${warning_parts[*]}")]"
+    fi
+    
+    local json_output="{
+        \"timestamp\": \"$(date -Iseconds)\",
+        \"hostname\": \"$(hostname)\",
+        \"version\": \"$SCRIPT_VERSION\",
+        \"status\": \"$([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "healthy" || echo "unhealthy")\",
+        \"critical_issues\": $critical_issues_json,
+        \"warnings\": $warnings_json,
+        \"actions_taken\": $actions_json,
+        \"metrics\": $metrics_json,
+        \"summary\": {
+            \"critical_issues_count\": ${#CRITICAL_ISSUES[@]},
+            \"warnings_count\": ${#WARNINGS[@]},
+            \"actions_taken_count\": ${#ACTIONS_KEYS[@]},
+            \"exit_code\": $([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "0" || echo "1")
+        }
+    }"
+    
+    if command -v jq >/dev/null 2>&1; then
+        echo "$json_output" | jq .
+    else
+        echo "$json_output"
+    fi
 }
 
 #===============================================================================
@@ -738,7 +898,8 @@ OPTIONS:
     --check-only        Run diagnostics without making changes
     --aggressive-clean  Enable more aggressive cleanup operations
     --service-restart   Allow automatic service restarts
-    --report-json       Output results in JSON format
+    --report-json       Output results in JSON format (saved to file)
+    --json-only         Output JSON directly to stdout for integration
     --verbose           Enable verbose logging
     --help              Show this help message
 
@@ -762,6 +923,12 @@ EXAMPLES:
     # Generate JSON report for monitoring systems
     $0 --report-json --verbose
 
+    # Output JSON directly to stdout for integration
+    $0 --json-only
+
+    # Check only with JSON output for monitoring
+    $0 --check-only --json-only
+
 EOF
 }
 
@@ -782,6 +949,10 @@ parse_arguments() {
                 ;;
             --report-json)
                 REPORT_JSON=true
+                shift
+                ;;
+            --json-only)
+                JSON_ONLY=true
                 shift
                 ;;
             --verbose)
@@ -807,6 +978,11 @@ main() {
     # Setup
     mkdir -p "$TEMP_DIR"
     trap cleanup_on_exit EXIT
+    
+    # Suppress normal output if JSON-only mode
+    if [[ "$JSON_ONLY" == true ]]; then
+        exec 1>/dev/null
+    fi
     
     print_header
     
@@ -850,6 +1026,12 @@ main() {
     echo "Critical issues: ${#CRITICAL_ISSUES[@]}"
     echo "Warnings: ${#WARNINGS[@]}"
     echo "Actions taken: ${#ACTIONS_KEYS[@]}"
+    
+    if [[ "$JSON_ONLY" == true ]]; then
+        # Restore stdout for JSON output
+        exec 1>&1
+        output_json_stdout
+    fi
     
     exit $exit_code
 }
