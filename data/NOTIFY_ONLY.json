@@ -1,0 +1,9 @@
+{
+    "decision": "NOTIFY_ONLY",
+    "threat_level": "LOW",
+    "analysis": "CPU usage is 10.9%, which is well below critical thresholds for service failure. The alert has already been resolved, indicating that the condition was temporary. Hence, no imminent threat to service availability exists.",
+    "immediate_actions": [],
+    "survival_timeline": "stable",
+    "notification_message": "Alert HighCPU was triggered for instance 47.129.163.27:9100 indicating a CPU usage of 10.9%. The alert has since been resolved, and there is no immediate need for action. Please monitor for any future occurrences.",
+    "reasoning": "The CPU usage is not at a level that threatens service availability, and the alert is already resolved. Notifying the team will ensure awareness but immediate action is not necessary."
+  }

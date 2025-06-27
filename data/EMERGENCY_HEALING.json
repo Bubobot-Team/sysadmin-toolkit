@@ -1,0 +1,15 @@
+{
+  "decision": "EMERGENCY_HEALING",
+  "threat_level": "CRITICAL",
+  "analysis": "The CPU usage on 47.129.163.27:9100 is at 100%, indicating that the system is completely saturated and could lead to unresponsiveness or service failure. This condition threatens service availability within the next 30 minutes and requires immediate intervention.",
+  "immediate_actions": [
+    {
+      "command": "kill -9 $(pgrep -f <problematic_process>)",
+      "purpose": "Kill a runaway process that is consuming excessive CPU resources and causing the system to be non-responsive.",
+      "safety_level": "RISKY"
+    }
+  ],
+  "survival_timeline": "immediate",
+  "notification_message": "Critical alert: CPU usage on 47.129.163.27 is at 100%. Immediate action is being taken to kill the runaway process and restore system performance.",
+  "reasoning": "The critical nature of the CPU usage at 100% poses an immediate risk to system availability. By killing the problematic process, we aim to restore normal CPU levels and prevent imminent service failure."
+}
