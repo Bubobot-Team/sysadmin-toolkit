@@ -70,24 +70,6 @@ Our flagship script provides comprehensive system health monitoring and automate
 
 ## 🔧 Integration Examples
 
-### n8n Workflow Integration
-Perfect for self-healing automation workflows:
-
-```json
-{
-  "name": "System Recovery Workflow",
-  "nodes": [
-    {
-      "name": "Health Check",
-      "type": "n8n-nodes-base.executeCommand",
-      "parameters": {
-        "command": "./system-doctor.sh --report-json"
-      }
-    }
-  ]
-}
-```
-
 ### GitHub Actions CI/CD
 ```yaml
 name: System Health Check
