@@ -25,7 +25,7 @@ set -euo pipefail
 # Configuration
 SCRIPT_VERSION="1.0.0"
 SCRIPT_NAME="System Doctor"
-LOG_FILE="/var/log/system-doctor.log"
+LOG_FILE="${LOG_FILE:-/tmp/system-doctor.log}"
 TEMP_DIR="/tmp/system-doctor-$$"
 JSON_REPORT_FILE="/tmp/system-doctor-report.json"
 
@@ -51,10 +51,71 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Results tracking
-declare -A RESULTS
-declare -A ACTIONS_TAKEN
-declare -a CRITICAL_ISSUES
-declare -a WARNINGS
+declare -a RESULTS_KEYS=()
+declare -a RESULTS_VALUES=()
+declare -a ACTIONS_KEYS=()
+declare -a ACTIONS_VALUES=()
+declare -a CRITICAL_ISSUES=()
+declare -a WARNINGS=()
+
+# Helper functions for associative array emulation
+set_result() {
+    local key="$1"
+    local value="$2"
+    
+    # Check if key already exists
+    for i in "${!RESULTS_KEYS[@]}"; do
+        if [[ "${RESULTS_KEYS[$i]}" == "$key" ]]; then
+            RESULTS_VALUES[$i]="$value"
+            return 0
+        fi
+    done
+    
+    # Add new key-value pair
+    RESULTS_KEYS+=("$key")
+    RESULTS_VALUES+=("$value")
+}
+
+get_result() {
+    local key="$1"
+    
+    for i in "${!RESULTS_KEYS[@]}"; do
+        if [[ "${RESULTS_KEYS[$i]}" == "$key" ]]; then
+            echo "${RESULTS_VALUES[$i]}"
+            return 0
+        fi
+    done
+    echo ""
+}
+
+set_action() {
+    local key="$1"
+    local value="$2"
+    
+    # Check if key already exists
+    for i in "${!ACTIONS_KEYS[@]}"; do
+        if [[ "${ACTIONS_KEYS[$i]}" == "$key" ]]; then
+            ACTIONS_VALUES[$i]="$value"
+            return 0
+        fi
+    done
+    
+    # Add new key-value pair
+    ACTIONS_KEYS+=("$key")
+    ACTIONS_VALUES+=("$value")
+}
+
+get_action() {
+    local key="$1"
+    
+    for i in "${!ACTIONS_KEYS[@]}"; do
+        if [[ "${ACTIONS_KEYS[$i]}" == "$key" ]]; then
+            echo "${ACTIONS_VALUES[$i]}"
+            return 0
+        fi
+    done
+    echo ""
+}
 
 #===============================================================================
 # Utility Functions
@@ -103,7 +164,7 @@ check_cpu_usage() {
     local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
     cpu_usage=${cpu_usage%.*}  # Remove decimal part
     
-    RESULTS["cpu_usage"]=$cpu_usage
+    set_result "cpu_usage" $cpu_usage
     
     if [[ $cpu_usage -gt $CPU_THRESHOLD ]]; then
         CRITICAL_ISSUES+=("High CPU usage: ${cpu_usage}%")
@@ -133,9 +194,9 @@ check_memory_usage() {
     local used_mem=$(echo $mem_info | awk '{print $3}')
     local memory_percent=$((used_mem * 100 / total_mem))
     
-    RESULTS["memory_usage"]=$memory_percent
-    RESULTS["memory_total_gb"]=$((total_mem / 1024 / 1024))
-    RESULTS["memory_used_gb"]=$((used_mem / 1024 / 1024))
+    set_result "memory_usage" $memory_percent
+    set_result "memory_total_gb" $((total_mem / 1024 / 1024))
+    set_result "memory_used_gb" $((used_mem / 1024 / 1024))
     
     if [[ $memory_percent -gt $MEMORY_THRESHOLD ]]; then
         CRITICAL_ISSUES+=("High memory usage: ${memory_percent}%")
@@ -186,8 +247,8 @@ check_disk_usage() {
         
     done < <(df -h | grep -E '^/dev/')
     
-    RESULTS["disk_critical"]="${#critical_disks[@]}"
-    RESULTS["disk_warnings"]="${#warning_disks[@]}"
+    set_result "disk_critical" "${#critical_disks[@]}"
+    set_result "disk_warnings" "${#warning_disks[@]}"
     
     if [[ ${#critical_disks[@]} -gt 0 ]]; then
         CRITICAL_ISSUES+=("Critical disk usage: ${critical_disks[*]}")
@@ -212,9 +273,9 @@ check_system_load() {
     local cpu_cores=$(nproc)
     local load_per_core=$((${load_1min%.*} / cpu_cores))
     
-    RESULTS["load_average"]=$load_avg
-    RESULTS["cpu_cores"]=$cpu_cores
-    RESULTS["load_per_core"]=$load_per_core
+    set_result "load_average" $load_avg
+    set_result "cpu_cores" $cpu_cores
+    set_result "load_per_core" $load_per_core
     
     if [[ $load_per_core -gt $LOAD_THRESHOLD ]]; then
         CRITICAL_ISSUES+=("High system load: $load_avg (${load_per_core}x per core)")
@@ -250,8 +311,8 @@ check_network_connectivity() {
         log "ERROR" "Internet connectivity is not working"
     fi
     
-    RESULTS["dns_working"]=$dns_check
-    RESULTS["internet_working"]=$internet_check
+    set_result "dns_working" $dns_check
+    set_result "internet_working" $internet_check
     
     if [[ "$dns_check" == true ]] && [[ "$internet_check" == true ]]; then
         log "SUCCESS" "Network connectivity is working"
@@ -315,8 +376,8 @@ check_critical_services() {
         fi
     done
     
-    RESULTS["failed_services"]="${#failed_services[@]}"
-    RESULTS["inactive_services"]="${#inactive_services[@]}"
+    set_result "failed_services" "${#failed_services[@]}"
+    set_result "inactive_services" "${#inactive_services[@]}"
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
         CRITICAL_ISSUES+=("Failed services: ${failed_services[*]}")
@@ -342,10 +403,10 @@ restart_failed_services() {
         
         if systemctl restart "$service" 2>/dev/null; then
             log "SUCCESS" "Successfully restarted service: $service"
-            ACTIONS_TAKEN["restart_$service"]="success"
+            set_action "restart_$service" "success"
         else
             log "ERROR" "Failed to restart service: $service"
-            ACTIONS_TAKEN["restart_$service"]="failed"
+            set_action "restart_$service" "failed"
         fi
     done
 }
@@ -369,7 +430,7 @@ cleanup_system_logs() {
             local journal_size_after=$(journalctl --disk-usage | awk '{print $6}' | sed 's/[^0-9.]//g')
             local journal_freed=$(echo "$journal_size_before - $journal_size_after" | bc 2>/dev/null || echo "0")
             total_freed=$(echo "$total_freed + $journal_freed" | bc 2>/dev/null || echo "$total_freed")
-            ACTIONS_TAKEN["journal_cleanup"]="freed ${journal_freed}MB"
+            set_action "journal_cleanup" "freed ${journal_freed}MB"
         fi
     fi
     
@@ -391,7 +452,7 @@ cleanup_system_logs() {
     # Clean package manager caches
     cleanup_package_cache
     
-    RESULTS["disk_space_freed"]="$total_freed MB"
+    set_result "disk_space_freed" "$total_freed MB"
     log "SUCCESS" "Log cleanup completed. Total space freed: $total_freed MB"
 }
 
@@ -413,12 +474,12 @@ cleanup_directory_logs() {
                     # Active log file - truncate
                     > "$file"
                     log "INFO" "Truncated active log file: $file"
-                    ACTIONS_TAKEN["truncate_$(basename "$file")"]="truncated"
+                    set_action "truncate_$(basename "$file")" "truncated"
                 elif [[ "$AGGRESSIVE_CLEAN" == true ]] && [[ "$file" =~ \.(log|out)\.[0-9]+$ ]]; then
                     # Old rotated log file - remove if aggressive cleanup is enabled
                     rm -f "$file"
                     log "INFO" "Removed old log file: $file"
-                    ACTIONS_TAKEN["remove_$(basename "$file")"]="removed"
+                    set_action "remove_$(basename "$file")" "removed"
                 fi
             fi
         fi
@@ -428,7 +489,7 @@ cleanup_directory_logs() {
     if [[ "$dir" == "/tmp" ]] && [[ "$AGGRESSIVE_CLEAN" == true ]] && [[ "$CHECK_ONLY" == false ]]; then
         find /tmp -type f -mtime +7 -delete 2>/dev/null || true
         log "INFO" "Cleaned temporary files older than 7 days from /tmp"
-        ACTIONS_TAKEN["temp_cleanup"]="completed"
+        set_action "temp_cleanup" "completed"
     fi
 }
 
@@ -440,16 +501,16 @@ cleanup_package_cache() {
         if command -v apt-get >/dev/null 2>&1; then
             apt-get clean >/dev/null 2>&1 || true
             apt-get autoremove -y >/dev/null 2>&1 || true
-            ACTIONS_TAKEN["apt_cleanup"]="completed"
+            set_action "apt_cleanup" "completed"
         fi
         
         # Clean YUM/DNF cache (RHEL/CentOS/Fedora)
         if command -v yum >/dev/null 2>&1; then
             yum clean all >/dev/null 2>&1 || true
-            ACTIONS_TAKEN["yum_cleanup"]="completed"
+            set_action "yum_cleanup" "completed"
         elif command -v dnf >/dev/null 2>&1; then
             dnf clean all >/dev/null 2>&1 || true
-            ACTIONS_TAKEN["dnf_cleanup"]="completed"
+            set_action "dnf_cleanup" "completed"
         fi
     fi
 }
@@ -489,13 +550,19 @@ check_disk_io() {
 generate_report() {
     local report_file="/tmp/system-doctor-report-$(date +%Y%m%d-%H%M%S).txt"
     
+    # Ensure arrays are initialized
+    [[ -z "${CRITICAL_ISSUES:-}" ]] && declare -a CRITICAL_ISSUES=()
+    [[ -z "${WARNINGS:-}" ]] && declare -a WARNINGS=()
+    [[ -z "${ACTIONS_KEYS:-}" ]] && declare -a ACTIONS_KEYS=()
+    [[ -z "${ACTIONS_VALUES:-}" ]] && declare -a ACTIONS_VALUES=()
+    
     {
         print_header
         echo ""
         echo "=== SYSTEM HEALTH SUMMARY ==="
         echo "Critical Issues: ${#CRITICAL_ISSUES[@]}"
         echo "Warnings: ${#WARNINGS[@]}"
-        echo "Actions Taken: ${#ACTIONS_TAKEN[@]}"
+        echo "Actions Taken: ${#ACTIONS_KEYS[@]}"
         echo ""
         
         if [[ ${#CRITICAL_ISSUES[@]} -gt 0 ]]; then
@@ -514,17 +581,17 @@ generate_report() {
             echo ""
         fi
         
-        if [[ ${#ACTIONS_TAKEN[@]} -gt 0 ]]; then
+        if [[ ${#ACTIONS_KEYS[@]} -gt 0 ]]; then
             echo "=== ACTIONS TAKEN ==="
-            for action in "${!ACTIONS_TAKEN[@]}"; do
-                echo "🔧 $action: ${ACTIONS_TAKEN[$action]}"
+            for i in "${!ACTIONS_KEYS[@]}"; do
+                echo "🔧 ${ACTIONS_KEYS[$i]}: ${ACTIONS_VALUES[$i]}"
             done
             echo ""
         fi
         
         echo "=== SYSTEM METRICS ==="
-        for metric in "${!RESULTS[@]}"; do
-            echo "$metric: ${RESULTS[$metric]}"
+        for i in "${!RESULTS_KEYS[@]}"; do
+            echo "${RESULTS_KEYS[$i]}: ${RESULTS_VALUES[$i]}"
         done
         
     } > "$report_file"
@@ -537,6 +604,12 @@ generate_report() {
 }
 
 generate_json_report() {
+    # Ensure arrays are initialized
+    [[ -z "${CRITICAL_ISSUES:-}" ]] && declare -a CRITICAL_ISSUES=()
+    [[ -z "${WARNINGS:-}" ]] && declare -a WARNINGS=()
+    [[ -z "${ACTIONS_KEYS:-}" ]] && declare -a ACTIONS_KEYS=()
+    [[ -z "${ACTIONS_VALUES:-}" ]] && declare -a ACTIONS_VALUES=()
+    
     local json_output="{
         \"timestamp\": \"$(date -Iseconds)\",
         \"hostname\": \"$(hostname)\",
@@ -544,8 +617,8 @@ generate_json_report() {
         \"status\": \"$([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "healthy" || echo "unhealthy")\",
         \"critical_issues\": $(printf '%s\n' "${CRITICAL_ISSUES[@]}" | jq -R . | jq -s .),
         \"warnings\": $(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s .),
-        \"actions_taken\": $(for k in "${!ACTIONS_TAKEN[@]}"; do echo "\"$k\": \"${ACTIONS_TAKEN[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/}/'),
-        \"metrics\": $(for k in "${!RESULTS[@]}"; do echo "\"$k\": \"${RESULTS[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/)/')
+        \"actions_taken\": $(for k in "${!ACTIONS_KEYS[@]}"; do echo "\"${ACTIONS_KEYS[$k]}\": \"${ACTIONS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/}/'),
+        \"metrics\": $(for k in "${!RESULTS_KEYS[@]}"; do echo "\"${RESULTS_KEYS[$k]}\": \"${RESULTS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/)/')
     }"
     
     echo "$json_output" | jq . > "$JSON_REPORT_FILE" 2>/dev/null || echo "$json_output" > "$JSON_REPORT_FILE"
@@ -678,7 +751,7 @@ main() {
     
     echo "Critical issues: ${#CRITICAL_ISSUES[@]}"
     echo "Warnings: ${#WARNINGS[@]}"
-    echo "Actions taken: ${#ACTIONS_TAKEN[@]}"
+    echo "Actions taken: ${#ACTIONS_KEYS[@]}"
     
     exit $exit_code
 }
