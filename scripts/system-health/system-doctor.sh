@@ -615,13 +615,18 @@ generate_json_report() {
         \"hostname\": \"$(hostname)\",
         \"version\": \"$SCRIPT_VERSION\",
         \"status\": \"$([ ${#CRITICAL_ISSUES[@]} -eq 0 ] && echo "healthy" || echo "unhealthy")\",
-        \"critical_issues\": $(printf '%s\n' "${CRITICAL_ISSUES[@]}" | jq -R . | jq -s .),
-        \"warnings\": $(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s .),
+        \"critical_issues\": $(printf '%s\n' "${CRITICAL_ISSUES[@]}" | jq -R . | jq -s . 2>/dev/null || printf '%s\n' "${CRITICAL_ISSUES[@]}"),
+        \"warnings\": $(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s . 2>/dev/null || printf '%s\n' "${WARNINGS[@]}"),
         \"actions_taken\": $(for k in "${!ACTIONS_KEYS[@]}"; do echo "\"${ACTIONS_KEYS[$k]}\": \"${ACTIONS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/}/'),
         \"metrics\": $(for k in "${!RESULTS_KEYS[@]}"; do echo "\"${RESULTS_KEYS[$k]}\": \"${RESULTS_VALUES[$k]}\""; done | paste -sd, | sed 's/^/{/' | sed 's/$/)/')
     }"
     
-    echo "$json_output" | jq . > "$JSON_REPORT_FILE" 2>/dev/null || echo "$json_output" > "$JSON_REPORT_FILE"
+    if command -v jq >/dev/null 2>&1; then
+        echo "$json_output" | jq . > "$JSON_REPORT_FILE"
+    else
+        echo "$json_output" > "$JSON_REPORT_FILE"
+        log "WARNING" "jq not found, JSON report is not pretty-printed"
+    fi
     echo "JSON report saved to: $JSON_REPORT_FILE"
 }
 
