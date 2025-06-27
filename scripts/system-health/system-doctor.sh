@@ -34,7 +34,7 @@ CPU_THRESHOLD=${CPU_THRESHOLD:-80}
 MEMORY_THRESHOLD=${MEMORY_THRESHOLD:-85}
 DISK_THRESHOLD=${DISK_THRESHOLD:-90}
 LOAD_THRESHOLD=${LOAD_THRESHOLD:-10}
-LOG_SIZE_THRESHOLD=${LOG_SIZE_THRESHOLD:-1048576}  # 1GB in KB
+LOG_SIZE_THRESHOLD=${LOG_SIZE_THRESHOLD:-102400}  # 100MB in KB (was 1GB)
 
 # Runtime flags
 CHECK_ONLY=false
@@ -250,6 +250,9 @@ check_disk_usage() {
     set_result "disk_critical" "${#critical_disks[@]}"
     set_result "disk_warnings" "${#warning_disks[@]}"
     
+    # Check for large log files
+    check_large_log_files
+    
     if [[ ${#critical_disks[@]} -gt 0 ]]; then
         CRITICAL_ISSUES+=("Critical disk usage: ${critical_disks[*]}")
         return 1
@@ -260,6 +263,34 @@ check_disk_usage() {
     fi
     
     return 0
+}
+
+check_large_log_files() {
+    log "INFO" "Checking for large log files..."
+    
+    local large_logs=()
+    local log_dirs=("/var/log" "/var/log/nginx" "/var/log/apache2" "/var/log/httpd")
+    
+    for log_dir in "${log_dirs[@]}"; do
+        if [[ -d "$log_dir" ]]; then
+            while IFS= read -r -d '' file; do
+                local size_kb=$(du -k "$file" 2>/dev/null | cut -f1)
+                if [[ $size_kb -gt $LOG_SIZE_THRESHOLD ]]; then
+                    local size_mb=$((size_kb / 1024))
+                    large_logs+=("$file (${size_mb}MB)")
+                fi
+            done < <(find "$log_dir" -type f \( -name "*.log" -o -name "*.out" -o -name "*.log.*" \) -print0 2>/dev/null)
+        fi
+    done
+    
+    if [[ ${#large_logs[@]} -gt 0 ]]; then
+        WARNINGS+=("Large log files detected: ${large_logs[*]}")
+        log "WARNING" "Large log files found: ${large_logs[*]}"
+        set_result "large_log_files" "${#large_logs[@]}"
+    else
+        log "SUCCESS" "No large log files detected"
+        set_result "large_log_files" "0"
+    fi
 }
 
 check_system_load() {
@@ -458,15 +489,16 @@ cleanup_system_logs() {
 
 cleanup_directory_logs() {
     local dir="$1"
-    log "INFO" "Cleaning logs in directory: $dir"
+    log "INFO" "Cleaning logs in directory: $dir (threshold: ${LOG_SIZE_THRESHOLD}KB)"
     
     # Find and clean large log files
     while IFS= read -r -d '' file; do
         local size_kb=$(du -k "$file" | cut -f1)
+        local size_mb=$((size_kb / 1024))
         
         if [[ $size_kb -gt $LOG_SIZE_THRESHOLD ]]; then
             local filename=$(basename "$file")
-            log "INFO" "Large log file detected: $file (${size_kb}KB)"
+            log "INFO" "Large log file detected: $file (${size_mb}MB / ${size_kb}KB)"
             
             if [[ "$CHECK_ONLY" == false ]]; then
                 # Safely truncate active log files, remove old ones
@@ -482,6 +514,10 @@ cleanup_directory_logs() {
                     set_action "remove_$(basename "$file")" "removed"
                 fi
             fi
+        elif [[ "$VERBOSE" == true ]]; then
+            # Show smaller files in verbose mode
+            local size_mb=$((size_kb / 1024))
+            log "INFO" "Log file checked: $file (${size_mb}MB / ${size_kb}KB) - below threshold"
         fi
     done < <(find "$dir" -type f \( -name "*.log" -o -name "*.out" -o -name "*.log.*" \) -print0 2>/dev/null)
     
@@ -654,7 +690,7 @@ ENVIRONMENT VARIABLES:
     MEMORY_THRESHOLD    Memory usage threshold percentage (default: 85)
     DISK_THRESHOLD      Disk usage threshold percentage (default: 90)
     LOAD_THRESHOLD      Load average threshold per core (default: 10)
-    LOG_SIZE_THRESHOLD  Log file size threshold in KB (default: 1048576)
+    LOG_SIZE_THRESHOLD  Log file size threshold in KB (default: 102400)
 
 EXAMPLES:
     # Basic health check with automatic fixes
