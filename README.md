@@ -141,9 +141,10 @@ Our scripts are designed to integrate seamlessly with popular monitoring platfor
 ## 🤝 Community & Support
 
 ### Join Our Community
-- **Discord**: [Join our DevOps community](https://discord.gg/bubobot) 
+- **Discord**: [Join our DevOps community](https://discord.gg/qwSKMu4jYA) 
 - **GitHub Discussions**: Share experiences and get help
 - **Blog**: [DevOps automation insights](https://blog.bubobot.com)
+- **Email**: support@bubobot.com
 
 ### Contributing
 We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
