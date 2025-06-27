@@ -303,6 +303,11 @@ check_large_tmp_files() {
     
     if [[ -d "/tmp" ]]; then
         while IFS= read -r -d '' file; do
+            # Skip files that are already detected as log files
+            if [[ "$file" =~ \.(log|out)$ ]] || [[ "$file" =~ \.(log|out)\.[0-9]+$ ]]; then
+                continue
+            fi
+            
             local size_kb=$(du -k "$file" 2>/dev/null | cut -f1)
             if [[ $size_kb -gt $LOG_SIZE_THRESHOLD ]]; then
                 local size_mb=$((size_kb / 1024))
@@ -489,7 +494,9 @@ cleanup_system_logs() {
             local journal_size_after=$(journalctl --disk-usage | awk '{print $6}' | sed 's/[^0-9.]//g')
             local journal_freed=$(echo "$journal_size_before - $journal_size_after" | bc 2>/dev/null || echo "0")
             total_freed=$(echo "$total_freed + $journal_freed" | bc 2>/dev/null || echo "$total_freed")
-            set_action "journal_cleanup" "freed ${journal_freed}MB"
+            set_action "journal_cleanup" "freed ${journal_freed}MB from systemd journal logs"
+        else
+            set_action "journal_cleanup" "would free space from systemd journal logs (check-only mode)"
         fi
     fi
     
@@ -534,12 +541,25 @@ cleanup_directory_logs() {
                     # Active log file - truncate
                     > "$file"
                     log "INFO" "Truncated active log file: $file"
-                    set_action "truncate_$(basename "$file")" "truncated"
+                    set_action "truncate_$file" "truncated ${size_mb}MB from $file"
                 elif [[ "$AGGRESSIVE_CLEAN" == true ]] && [[ "$file" =~ \.(log|out)\.[0-9]+$ ]]; then
                     # Old rotated log file - remove if aggressive cleanup is enabled
                     rm -f "$file"
                     log "INFO" "Removed old log file: $file"
-                    set_action "remove_$(basename "$file")" "removed"
+                    set_action "remove_$file" "removed $file (${size_mb}MB)"
+                else
+                    # File detected but not cleaned (not aggressive mode or not a log file)
+                    log "INFO" "Large file detected but not cleaned (check-only or not eligible): $file"
+                    set_action "skipped_$file" "skipped $file (${size_mb}MB) - not eligible for cleanup"
+                fi
+            else
+                # Check-only mode - just report what would be done
+                if [[ "$file" =~ \.(log|out)$ ]] && ! [[ "$file" =~ \.[0-9]+$ ]]; then
+                    set_action "would_truncate_$file" "would truncate $file (${size_mb}MB)"
+                elif [[ "$AGGRESSIVE_CLEAN" == true ]] && [[ "$file" =~ \.(log|out)\.[0-9]+$ ]]; then
+                    set_action "would_remove_$file" "would remove $file (${size_mb}MB)"
+                else
+                    set_action "would_skip_$file" "would skip $file (${size_mb}MB) - not eligible"
                 fi
             fi
         elif [[ "$VERBOSE" == true ]]; then
@@ -553,7 +573,7 @@ cleanup_directory_logs() {
     if [[ "$dir" == "/tmp" ]] && [[ "$AGGRESSIVE_CLEAN" == true ]] && [[ "$CHECK_ONLY" == false ]]; then
         find /tmp -type f -mtime +7 -delete 2>/dev/null || true
         log "INFO" "Cleaned temporary files older than 7 days from /tmp"
-        set_action "temp_cleanup" "completed"
+        set_action "temp_cleanup" "removed old temp files from /tmp"
     fi
 }
 
@@ -565,16 +585,25 @@ cleanup_package_cache() {
         if command -v apt-get >/dev/null 2>&1; then
             apt-get clean >/dev/null 2>&1 || true
             apt-get autoremove -y >/dev/null 2>&1 || true
-            set_action "apt_cleanup" "completed"
+            set_action "apt_cleanup" "cleaned APT package cache and removed unused packages"
         fi
         
         # Clean YUM/DNF cache (RHEL/CentOS/Fedora)
         if command -v yum >/dev/null 2>&1; then
             yum clean all >/dev/null 2>&1 || true
-            set_action "yum_cleanup" "completed"
+            set_action "yum_cleanup" "cleaned YUM package cache"
         elif command -v dnf >/dev/null 2>&1; then
             dnf clean all >/dev/null 2>&1 || true
-            set_action "dnf_cleanup" "completed"
+            set_action "dnf_cleanup" "cleaned DNF package cache"
+        fi
+    else
+        # Check-only mode
+        if command -v apt-get >/dev/null 2>&1; then
+            set_action "apt_cleanup" "would clean APT package cache (check-only mode)"
+        elif command -v yum >/dev/null 2>&1; then
+            set_action "yum_cleanup" "would clean YUM package cache (check-only mode)"
+        elif command -v dnf >/dev/null 2>&1; then
+            set_action "dnf_cleanup" "would clean DNF package cache (check-only mode)"
         fi
     fi
 }
