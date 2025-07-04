@@ -230,7 +230,7 @@ class SSLHealthScanner {
 
     checkHostnameMatch(hostname, cert) {
         try {
-            const commonName = cert.subject?.CN;
+            const commonName = cert.subject && cert.subject.CN;
             const altNames = cert.subjectaltname ? 
                 cert.subjectaltname.split(', ').map(name => name.replace('DNS:', '')) : [];
             
@@ -444,8 +444,8 @@ class SSLHealthScanner {
         console.log('-'.repeat(30));
         if (results.certificates.chain && results.certificates.chain.length > 0) {
             const leafCert = results.certificates.chain[0];
-            console.log(`Subject: ${leafCert.subject?.CN || 'Unknown'}`);
-            console.log(`Issuer: ${leafCert.issuer?.CN || 'Unknown'}`);
+            console.log(`Subject: ${(leafCert.subject && leafCert.subject.CN) || 'Unknown'}`);
+            console.log(`Issuer: ${(leafCert.issuer && leafCert.issuer.CN) || 'Unknown'}`);
             console.log(`Valid Until: ${new Date(leafCert.valid_to).toISOString()}`);
             console.log(`Days Until Expiry: ${results.certificates.daysUntilExpiry}`);
         } else {
@@ -517,9 +517,9 @@ class SSLHealthScanner {
             
             // Certificate details
             certificate: {
-                subject: results.certificates.chain[0]?.subject?.CN || 'Unknown',
-                issuer: results.certificates.chain[0]?.issuer?.CN || 'Unknown',
-                validUntil: results.certificates.chain[0]?.valid_to ? new Date(results.certificates.chain[0].valid_to).toISOString() : null,
+                subject: (results.certificates.chain[0] && results.certificates.chain[0].subject && results.certificates.chain[0].subject.CN) || 'Unknown',
+                issuer: (results.certificates.chain[0] && results.certificates.chain[0].issuer && results.certificates.chain[0].issuer.CN) || 'Unknown',
+                validUntil: (results.certificates.chain[0] && results.certificates.chain[0].valid_to) ? new Date(results.certificates.chain[0].valid_to).toISOString() : null,
                 daysUntilExpiry: results.certificates.daysUntilExpiry,
                 isValid: results.certificates.issues.length === 0,
                 issues: results.certificates.issues,
@@ -528,11 +528,11 @@ class SSLHealthScanner {
             
             // Protocol support
             protocols: {
-                tls13: results.protocols['TLSv1.3']?.supported || false,
-                tls12: results.protocols['TLSv1.2']?.supported || false,
-                tls11: results.protocols['TLSv1.1']?.supported || false,
-                tls10: results.protocols['TLSv1']?.supported || false,
-                ssl3: results.protocols['SSLv3']?.supported || false
+                tls13: (results.protocols['TLSv1.3'] && results.protocols['TLSv1.3'].supported) || false,
+                tls12: (results.protocols['TLSv1.2'] && results.protocols['TLSv1.2'].supported) || false,
+                tls11: (results.protocols['TLSv1.1'] && results.protocols['TLSv1.1'].supported) || false,
+                tls10: (results.protocols['TLSv1'] && results.protocols['TLSv1'].supported) || false,
+                ssl3: (results.protocols['SSLv3'] && results.protocols['SSLv3'].supported) || false
             },
             
             // Vulnerabilities
@@ -571,13 +571,13 @@ class SSLHealthScanner {
     }
 
     calculateProtocolGrade(results) {
-        if (results.protocols['TLSv1.3']?.supported) {
+        if (results.protocols['TLSv1.3'] && results.protocols['TLSv1.3'].supported) {
             return 'A+';
-        } else if (results.protocols['TLSv1.2']?.supported) {
+        } else if (results.protocols['TLSv1.2'] && results.protocols['TLSv1.2'].supported) {
             return 'A';
-        } else if (results.protocols['TLSv1.1']?.supported) {
+        } else if (results.protocols['TLSv1.1'] && results.protocols['TLSv1.1'].supported) {
             return 'B';
-        } else if (results.protocols['TLSv1']?.supported) {
+        } else if (results.protocols['TLSv1'] && results.protocols['TLSv1'].supported) {
             return 'C';
         } else {
             return 'F';

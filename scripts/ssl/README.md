@@ -36,6 +36,7 @@ node ssl-health-assessment.js google.com 443 --json
 - ✅ Detailed recommendations
 - ✅ JSON report generation
 - ✅ n8n workflow integration with structured JSON output
+- ✅ Compatible with older Node.js versions (no optional chaining)
 
 ## Common SSL Issues & Solutions
 
@@ -105,6 +106,11 @@ const options = {
 };
 ```
 
+## Requirements
+
+- **Node.js**: Version 12 or higher (compatible with older versions)
+- **No external dependencies**: Uses only Node.js built-in modules
+
 ## Best Practices
 
 1. **Always use complete certificate chains**
@@ -151,6 +157,11 @@ const options = {
    ```bash
    openssl ciphers -v
    ```
+
+5. **Node.js compatibility issues:**
+   - If you encounter syntax errors with `?.` operators, ensure you're using Node.js 12+
+   - The script has been updated to be compatible with older Node.js versions
+   - For n8n integration, the script uses traditional property access patterns
 
 ## n8n Workflow Integration
 
