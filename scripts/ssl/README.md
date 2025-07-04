@@ -15,12 +15,16 @@ A comprehensive SSL/TLS security scanner that analyzes:
 
 **Usage:**
 ```bash
-node ssl-health-assessment.js <hostname> [port]
+node ssl-health-assessment.js <hostname> [port] [--json]
 ```
 
-**Example:**
+**Examples:**
 ```bash
+# Standard output with formatted report
 node ssl-health-assessment.js google.com 443
+
+# JSON output for n8n workflow integration
+node ssl-health-assessment.js google.com 443 --json
 ```
 
 **Features:**
@@ -31,6 +35,7 @@ node ssl-health-assessment.js google.com 443
 - ✅ Security grading (A+ to F)
 - ✅ Detailed recommendations
 - ✅ JSON report generation
+- ✅ n8n workflow integration with structured JSON output
 
 ## Common SSL Issues & Solutions
 
@@ -146,6 +151,65 @@ const options = {
    ```bash
    openssl ciphers -v
    ```
+
+## n8n Workflow Integration
+
+The tool supports JSON output optimized for n8n workflow integration using the `--json` flag.
+
+### JSON Output Structure
+
+When using `--json`, the tool outputs structured data with the following format:
+
+```json
+{
+  "hostname": "example.com",
+  "port": 443,
+  "scanTime": "2025-07-04T03:56:19.161Z",
+  "scanDuration": 2358,
+  "connectionStatus": "connected",
+  "overallGrade": "A+",
+  "grades": {
+    "certificate": "A",
+    "protocol": "A", 
+    "vulnerability": "A"
+  },
+  "certificate": {
+    "subject": "example.com",
+    "issuer": "Let's Encrypt Authority X3",
+    "validUntil": "2025-08-06T23:07:04.000Z",
+    "daysUntilExpiry": 33,
+    "isValid": true,
+    "issues": [],
+    "hostnameMatch": true
+  },
+  "protocols": {
+    "tls13": false,
+    "tls12": true,
+    "tls11": false,
+    "tls10": false,
+    "ssl3": false
+  },
+  "vulnerabilities": {
+    "poodle": false,
+    "freak": false,
+    "hasVulnerabilities": false
+  },
+  "recommendations": [],
+  "error": null,
+  "success": true
+}
+```
+
+### Key Fields for n8n Workflows
+
+- **`overallGrade`**: Overall SSL Labs style rating (A+ to F)
+- **`grades.certificate`**: Certificate-specific grade
+- **`grades.protocol`**: Protocol support grade  
+- **`grades.vulnerability`**: Vulnerability assessment grade
+- **`certificate.isValid`**: Boolean indicating certificate validity
+- **`certificate.daysUntilExpiry`**: Days until certificate expires
+- **`vulnerabilities.hasVulnerabilities`**: Boolean indicating if any vulnerabilities found
+- **`success`**: Boolean indicating if scan completed successfully
 
 ## Report Files
 

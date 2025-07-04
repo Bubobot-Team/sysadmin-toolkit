@@ -12,16 +12,14 @@ class SSLHealthScanner {
     constructor(options = {}) {
         this.options = {
             timeout: options.timeout || 15000,
-            verbose: options.verbose || false
+            verbose: options.verbose || false,
+            jsonOutput: options.jsonOutput || false
         };
         
         this.protocols = ['TLSv1.3', 'TLSv1.2', 'TLSv1.1', 'TLSv1', 'SSLv3'];
     }
 
     async scan(hostname, port = 443) {
-        console.log(`🔍 Starting SSL Health Assessment for ${hostname}:${port}`);
-        console.log(`⏰ Scan started at: ${new Date().toISOString()}\n`);
-        
         const startTime = Date.now();
         const results = {
             hostname,
@@ -41,9 +39,17 @@ class SSLHealthScanner {
             connectionStatus: 'unknown'
         };
 
+        // Only show console output if not in JSON mode
+        if (!this.options.jsonOutput) {
+            console.log(`🔍 Starting SSL Health Assessment for ${hostname}:${port}`);
+            console.log(`⏰ Scan started at: ${new Date().toISOString()}\n`);
+        }
+
         try {
             // Test basic connectivity
-            console.log('🔌 Testing basic connectivity...');
+            if (!this.options.jsonOutput) {
+                console.log('🔌 Testing basic connectivity...');
+            }
             const connectivityTest = await this.testBasicConnectivity(hostname, port);
             results.connectionStatus = connectivityTest.status;
             
@@ -61,28 +67,40 @@ class SSLHealthScanner {
             }
 
             // Certificate Analysis
-            console.log('📜 Analyzing certificates...');
+            if (!this.options.jsonOutput) {
+                console.log('📜 Analyzing certificates...');
+            }
             try {
                 results.certificates = await this.analyzeCertificates(hostname, port);
             } catch (error) {
-                console.log(`⚠️ Certificate analysis failed: ${error.message}`);
+                if (!this.options.jsonOutput) {
+                    console.log(`⚠️ Certificate analysis failed: ${error.message}`);
+                }
                 results.certificates.issues.push(`Certificate analysis failed: ${error.message}`);
             }
             
             // Protocol Support Analysis
-            console.log('🔐 Testing protocol support...');
+            if (!this.options.jsonOutput) {
+                console.log('🔐 Testing protocol support...');
+            }
             try {
                 results.protocols = await this.analyzeProtocols(hostname, port);
             } catch (error) {
-                console.log(`⚠️ Protocol analysis failed: ${error.message}`);
+                if (!this.options.jsonOutput) {
+                    console.log(`⚠️ Protocol analysis failed: ${error.message}`);
+                }
             }
             
             // Vulnerability Assessment
-            console.log('🚨 Scanning for vulnerabilities...');
+            if (!this.options.jsonOutput) {
+                console.log('🚨 Scanning for vulnerabilities...');
+            }
             try {
                 results.vulnerabilities = await this.checkVulnerabilities(hostname, port);
             } catch (error) {
-                console.log(`⚠️ Vulnerability scan failed: ${error.message}`);
+                if (!this.options.jsonOutput) {
+                    console.log(`⚠️ Vulnerability scan failed: ${error.message}`);
+                }
             }
             
             // Calculate Overall Grade
@@ -92,12 +110,16 @@ class SSLHealthScanner {
             results.recommendations = this.generateRecommendations(results);
             
             results.scanDuration = Date.now() - startTime;
-            console.log(`\n✅ Scan completed in ${results.scanDuration}ms`);
+            if (!this.options.jsonOutput) {
+                console.log(`\n✅ Scan completed in ${results.scanDuration}ms`);
+            }
             
             return results;
             
         } catch (error) {
-            console.error(`❌ Scan failed: ${error.message}`);
+            if (!this.options.jsonOutput) {
+                console.error(`❌ Scan failed: ${error.message}`);
+            }
             results.error = error.message;
             results.scanDuration = Date.now() - startTime;
             return results;
@@ -468,34 +490,156 @@ class SSLHealthScanner {
 
         return results;
     }
+
+    generateN8nOutput(results) {
+        // Calculate individual grades for n8n workflow
+        const certificateGrade = this.calculateCertificateGrade(results);
+        const protocolGrade = this.calculateProtocolGrade(results);
+        const vulnerabilityGrade = this.calculateVulnerabilityGrade(results);
+        
+        return {
+            // Basic info for n8n
+            hostname: results.hostname,
+            port: results.port,
+            scanTime: results.scanTime,
+            scanDuration: results.scanDuration,
+            connectionStatus: results.connectionStatus,
+            
+            // Overall SSL Labs style rating
+            overallGrade: results.overallGrade,
+            
+            // Individual component grades
+            grades: {
+                certificate: certificateGrade,
+                protocol: protocolGrade,
+                vulnerability: vulnerabilityGrade
+            },
+            
+            // Certificate details
+            certificate: {
+                subject: results.certificates.chain[0]?.subject?.CN || 'Unknown',
+                issuer: results.certificates.chain[0]?.issuer?.CN || 'Unknown',
+                validUntil: results.certificates.chain[0]?.valid_to ? new Date(results.certificates.chain[0].valid_to).toISOString() : null,
+                daysUntilExpiry: results.certificates.daysUntilExpiry,
+                isValid: results.certificates.issues.length === 0,
+                issues: results.certificates.issues,
+                hostnameMatch: !results.certificates.hostnameMismatch
+            },
+            
+            // Protocol support
+            protocols: {
+                tls13: results.protocols['TLSv1.3']?.supported || false,
+                tls12: results.protocols['TLSv1.2']?.supported || false,
+                tls11: results.protocols['TLSv1.1']?.supported || false,
+                tls10: results.protocols['TLSv1']?.supported || false,
+                ssl3: results.protocols['SSLv3']?.supported || false
+            },
+            
+            // Vulnerabilities
+            vulnerabilities: {
+                poodle: results.vulnerabilities.poodle || false,
+                freak: results.vulnerabilities.freak || false,
+                hasVulnerabilities: Object.values(results.vulnerabilities).some(v => v === true)
+            },
+            
+            // Recommendations for n8n workflow
+            recommendations: results.recommendations.map(rec => ({
+                type: rec.type,
+                severity: rec.severity,
+                message: rec.message,
+                action: rec.action
+            })),
+            
+            // Error info if any
+            error: results.error || null,
+            
+            // Success indicator for n8n
+            success: !results.error && results.connectionStatus === 'connected'
+        };
+    }
+
+    calculateCertificateGrade(results) {
+        if (results.certificates.issues.length === 0 && !results.certificates.hostnameMismatch) {
+            return 'A';
+        } else if (results.certificates.issues.length === 1 && results.certificates.daysUntilExpiry > 7) {
+            return 'B';
+        } else if (results.certificates.daysUntilExpiry > 0) {
+            return 'C';
+        } else {
+            return 'F';
+        }
+    }
+
+    calculateProtocolGrade(results) {
+        if (results.protocols['TLSv1.3']?.supported) {
+            return 'A+';
+        } else if (results.protocols['TLSv1.2']?.supported) {
+            return 'A';
+        } else if (results.protocols['TLSv1.1']?.supported) {
+            return 'B';
+        } else if (results.protocols['TLSv1']?.supported) {
+            return 'C';
+        } else {
+            return 'F';
+        }
+    }
+
+    calculateVulnerabilityGrade(results) {
+        const vulnCount = Object.values(results.vulnerabilities).filter(v => v === true).length;
+        if (vulnCount === 0) {
+            return 'A';
+        } else if (vulnCount === 1) {
+            return 'C';
+        } else {
+            return 'F';
+        }
+    }
 }
 
 // CLI Usage
 if (require.main === module) {
     const args = process.argv.slice(2);
     if (args.length === 0) {
-        console.log('Usage: node ssl-health-assessment.js <hostname> [port]');
+        console.log('Usage: node ssl-health-assessment.js <hostname> [port] [--json]');
         console.log('Example: node ssl-health-assessment.js google.com 443');
+        console.log('Example: node ssl-health-assessment.js google.com 443 --json');
         process.exit(1);
     }
 
     const hostname = args[0];
     const port = parseInt(args[1]) || 443;
+    const jsonOutput = args.includes('--json');
 
-    const scanner = new SSLHealthScanner();
+    const scanner = new SSLHealthScanner({ jsonOutput });
     
     scanner.scan(hostname, port)
         .then(results => {
-            scanner.formatResults(results);
-            
-            // Save results to JSON file
-            const fs = require('fs');
-            const filename = `ssl-report-${hostname}-${Date.now()}.json`;
-            fs.writeFileSync(filename, JSON.stringify(results, null, 2));
-            console.log(`\n📄 Report saved to: ${filename}`);
+            if (jsonOutput) {
+                // Output n8n-optimized JSON
+                const n8nOutput = scanner.generateN8nOutput(results);
+                console.log(JSON.stringify(n8nOutput, null, 2));
+            } else {
+                // Output formatted results
+                scanner.formatResults(results);
+                
+                // Save results to JSON file
+                const fs = require('fs');
+                const filename = `ssl-report-${hostname}-${Date.now()}.json`;
+                fs.writeFileSync(filename, JSON.stringify(results, null, 2));
+                console.log(`\n📄 Report saved to: ${filename}`);
+            }
         })
         .catch(error => {
-            console.error('❌ Scan failed:', error.message);
+            if (jsonOutput) {
+                console.log(JSON.stringify({
+                    error: error.message,
+                    success: false,
+                    hostname: hostname,
+                    port: port
+                }, null, 2));
+            } else {
+                console.error('❌ Scan failed:', error.message);
+            }
             process.exit(1);
         });
 }
