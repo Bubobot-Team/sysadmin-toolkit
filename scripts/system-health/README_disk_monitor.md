@@ -16,7 +16,8 @@ This script monitors disk usage and uses heartbeat monitoring to alert when disk
 
 2. **Configure Heartbeat URL**
    ```bash
-   # Edit the script and paste the full heartbeat URL from Bubobot
+   # Edit the script (https://github.com/Bubobot-Team/sysadmin-toolkit/blob/main/scripts/system-health/disk_monitor.sh)
+   # and paste the full heartbeat URL from Bubobot
    HEARTBEAT_URL="paste_your_full_heartbeat_url_here"
    ```
 
