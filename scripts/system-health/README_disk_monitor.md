@@ -7,10 +7,12 @@ This script monitors disk usage and uses heartbeat monitoring to alert when disk
 
 1. **Create Bubobot Monitor**
    - Go to https://app.bubobot.com/
-   - Click "Create" > "Create monitor"
-   - In "Select category", choose "Server"
-   - In "Send alert when", choose "Heartbeat missed"
+   - Click *Create monitor*
+   - In *Select category*, choose *Server*
+   - In *Send alert when*, choose *Heartbeat missed*
    - Copy the generated heartbeat URL
+   - Configure heartbeat interval to match your cron schedule (e.g., 5 minutes)
+   - Save monitor
 
 2. **Configure Heartbeat URL**
    ```bash
@@ -24,9 +26,6 @@ This script monitors disk usage and uses heartbeat monitoring to alert when disk
    */5 * * * * /path/to/disk_monitor.sh >> /var/log/disk_monitor.log 2>&1
    ```
 
-4. **Configure Monitoring Service**
-   - Set heartbeat interval to match your cron schedule (e.g., 5 minutes)
-   - Configure alert notifications
 
 ## How It Works
 
